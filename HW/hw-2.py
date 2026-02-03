@@ -63,14 +63,22 @@ st.sidebar.header("Model Settings")
 
 model_provider = st.sidebar.radio(
     "Select AI Model:",
-    ("GPT-5-Nano", "Claude Opus 4.5"),
+    ("OpenAI (GPT 5 Nano)", "Claude (Sonnet 4.5)"),
     index=0,
 )
 
-if model_provider == "GPT-5-Nano":
-    model = "gpt-5-nano"
+use_advanced = st.sidebar.checkbox("Use advanced model")
+
+if model_provider == "OpenAI (GPT 5 Nano)":
+    if use_advanced:
+        model = "gpt-5"
+    else:
+        model = "gpt-5-nano"
 else:  
-    model = "claude-opus-4-5-20251101"
+    if use_advanced:
+        model = "claude-opus-4-5-20251101"
+    else:
+        model = "claude-sonnet-4-5-20250929"
 
 # Summary Selection Logic
 if summary_choice == "100 words":
