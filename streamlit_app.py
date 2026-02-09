@@ -12,7 +12,7 @@ hw2 = st.Page("HW/hw-2.py", title="HW 2")
 hw3 = st.Page("HW/hw-3.py", title="HW 3", default=True)
 
 # Build navigation
-pg = st.navigation([hw1, hw2])
+pg = st.navigation([hw1, hw2, hw3])
 
 # Run selected page
 pg.run()
