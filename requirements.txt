@@ -3,3 +3,5 @@ openai
 beautifulsoup4
 anthropic
 requests
+PyPDF2
+
