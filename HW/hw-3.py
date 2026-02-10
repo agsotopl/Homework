@@ -31,7 +31,7 @@ def build_system_prompt(url_1, url_2):
     """Build system prompt with URL context"""
     base_system_prompt = "You are a helpful assistant who explains things in a way that a 10-year-old can understand. Use simple words, short sentences, and lighthearted examples. After answering a question, always ask 'Do you want more info?' If the user says yes, provide more details and ask again. If the user says no, go back to asking 'How can I help?'"
     
-    # Fetch URL content
+
     url_context = ""
     if url_1 or url_2:
         urls_to_fetch = [url_1, url_2]
@@ -83,7 +83,7 @@ if 'openai_client' not in st.session_state:
 if 'anthropic_client' not in st.session_state:
     st.session_state.anthropic_client = Anthropic(api_key=claude_api_key)
 
-# Initialize messages with URL context or update if URLs changed
+# Track URL's for prompt context
 current_urls = (url_1, url_2)
 
 if 'messages' not in st.session_state:
@@ -122,10 +122,10 @@ def maintain_buffer(messages, max_non_system_messages=6):
     if len(non_system_messages) <= max_non_system_messages:
         return messages
     
-    # Keep only the last max_non_system_messages
+    # Keep only last 6 messages
     filtered = non_system_messages[-max_non_system_messages:]
     
-    # Prepend system message (always kept)
+
     if system_message:
         return [system_message] + filtered
     return filtered
@@ -163,16 +163,16 @@ if prompt := st.chat_input("What's up?"):
             response_obj = st.session_state.anthropic_client.messages.create(
                 model=model,
                 max_tokens=1024,
-                system=system_message,  # Separate system parameter
-                messages=conversation_messages,  # Only user/assistant messages
+                system=system_message,  
+                messages=conversation_messages,  
             )
             response = response_obj.content[0].text
             st.markdown(response)
 
     st.session_state.messages.append({"role": "assistant", "content": response})
     
-    # Maintain buffer - keep system message + last 6 non-system messages
+    # Last 6 messages and system prompt
     st.session_state.messages = maintain_buffer(st.session_state.messages)
     
-    # Show latest response
+    # Latest Response
     st.rerun()
