@@ -7,7 +7,7 @@ from bs4 import BeautifulSoup
 
 st.title("HW 3: Chatbot")
 
-# Description of how the chatbot works
+# Chatbot Description
 st.write("""
 This chatbot uses advanced LLM models (OpenAI GPT-5 or Claude Opus 4.5) to have intelligent conversations.
 
@@ -150,10 +150,21 @@ if prompt := st.chat_input("What's up?"):
             )
             response = st.write_stream(stream)
         else:
+            # Extract system message and non-system messages for Claude
+            system_message = None
+            conversation_messages = []
+            
+            for msg in st.session_state.messages:
+                if msg["role"] == "system":
+                    system_message = msg["content"]
+                else:
+                    conversation_messages.append(msg)
+            
             response_obj = st.session_state.anthropic_client.messages.create(
                 model=model,
                 max_tokens=1024,
-                messages=st.session_state.messages,
+                system=system_message,  # Separate system parameter
+                messages=conversation_messages,  # Only user/assistant messages
             )
             response = response_obj.content[0].text
             st.markdown(response)
@@ -165,4 +176,3 @@ if prompt := st.chat_input("What's up?"):
     
     # Show latest response
     st.rerun()
-
