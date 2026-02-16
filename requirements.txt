@@ -4,4 +4,5 @@ beautifulsoup4
 anthropic
 requests
 PyPDF2
-
+chromadb
+pysqlite3-binary
