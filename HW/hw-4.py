@@ -24,7 +24,7 @@ def _ensure_sqlite_version(min_version=(3, 35, 0)):
         pass
 
     try:
-        # pysqlite3 exposes dbapi2 which is compatible with the stdlib sqlite3 module
+        
         from pysqlite3 import dbapi2 as pysqlite3_dbapi
         sys.modules["sqlite3"] = pysqlite3_dbapi
         return True
@@ -47,7 +47,7 @@ st.title("Lab 4: ChromaDB")
 st.write("""
 This chatbot uses advanced LLM models (OpenAI GPT-5 or Claude Opus 4.5) to have intelligent conversations.
 
-**Conversation Memory:** The chatbot maintains a buffer of the last 6 messages (3 user-assistant exchanges) 
+**Conversation Memory:** The chatbot maintains a buffer of the last 5 interactions (10 messages, i.e. 5 user-assistant exchanges) 
 along with a persistent system prompt. The system prompt includes any URL context you provide and is 
 **never discarded** throughout the entire conversation, ensuring consistent context. This approach 
 efficiently manages token usage while maintaining conversation coherence.
@@ -91,7 +91,7 @@ if not openai_api_key:
 
 openai_client = OpenAI(api_key=openai_api_key)
 
-# Initialize Anthropic client only if package and key are available
+# Initialize Anthropic client
 anthropic_client = None
 if claude_api_key and anthropic_available:
     try:
@@ -125,11 +125,11 @@ def clean_text(text: str) -> str:
     """
     if not text:
         return ""
-    # remove hyphen
+    
     text = text.replace("-\n", "")
-    # replace remaining newlines 
+     
     text = text.replace("\n", " ")
-    # collapse multiple spaces
+    
     return " ".join(text.split())
 
 
@@ -145,28 +145,45 @@ def build_chroma_collection(openai_client, collection_name="Lab4Collection", emb
     if "Lab4_VectorDB" in st.session_state:
         return st.session_state.Lab4_VectorDB
 
-    # Find PDFs in workspace root
+    # Use html/directory
     workspace_root = os.getcwd()
-    pdf_pattern = os.path.join(workspace_root, "**", "*.pdf")
-    pdf_paths = [p for p in glob.glob(pdf_pattern, recursive=True) if ".venv" not in p and ".git" not in p]
-    # Show found PDFs in sidebar 
-    if pdf_paths:
-        st.sidebar.write(f"Found {len(pdf_paths)} PDF(s):")
-        for p in pdf_paths:
+    html_dir = os.path.join(workspace_root, "html")
+    html_pattern = os.path.join(html_dir, "*.html")
+    html_paths = [p for p in glob.glob(html_pattern) if ".venv" not in p and ".git" not in p]
+    # Show HTML files in sidebar
+    if html_paths:
+        st.sidebar.write(f"Found {len(html_paths)} HTML file(s):")
+        for p in html_paths:
             st.sidebar.write(f"- {os.path.relpath(p, workspace_root)}")
-    if not pdf_paths:
-        st.warning("No PDF files found in the workspace to build the Chroma collection.")
+    if not html_paths:
+        st.warning("No HTML files found in the workspace/html folder to build the Chroma collection.")
         st.session_state.Lab4_VectorDB = None
         return None
 
-    # Initialize Chroma client
-    chroma_client = chromadb.Client(Settings())
+    # Use a persist directory so the DB is only created once and can be re-used across runs
+    persist_directory = os.path.join(workspace_root, "chroma_db")
+    chroma_client = chromadb.Client(Settings(persist_directory=persist_directory))
 
-    # Create collection 
+    # If the persist directory already contains data and the collection exists, just return it
     try:
-        
         collection = chroma_client.get_collection(name=collection_name)
+        # If collection retrieval succeeded and appears non-empty, reuse it
+        # Use a safe check: try to query 1 item to see if anything exists
+        try:
+            test_q = collection.count()
+            if test_q and test_q > 0:
+                st.sidebar.info(f"Loaded existing collection '{collection_name}' with {test_q} items from persist directory")
+                st.session_state.Lab4_VectorDB = collection
+                return collection
+        except Exception:
+            # Fall through to rebuild if count() is not supported or fails
+            pass
     except Exception:
+        # Collection not found — we'll create it below
+        collection = None
+
+    # Create collection if it doesn't exist
+    if collection is None:
         collection = chroma_client.create_collection(name=collection_name)
 
     ids = []
@@ -174,31 +191,62 @@ def build_chroma_collection(openai_client, collection_name="Lab4Collection", emb
     metadatas = []
     embeddings = []
 
-    # Chunking helper
-    def chunk_text(text, chunk_size=1000, overlap=200):
-        chunks = []
-        start = 0
-        length = len(text)
-        while start < length:
-            end = min(start + chunk_size, length)
-            chunks.append(text[start:end])
-            start = end - overlap if end < length else end
-        return chunks
-
-    for pdf_path in pdf_paths:
-        text = extract_text_from_pdf(pdf_path)
-        # Clean text
-        text = clean_text(text)
+    # Chunking helper: We'll create exactly two chunks per document.
+    # Method: split the cleaned document text roughly in half but try to cut at a sentence boundary
+    # (nearest period) to avoid breaking sentences mid-way. This keeps each mini-document coherent
+    # while keeping chunk count small and manageable for retrieval. Two chunks per file provides
+    # coarse-grained locality while limiting embedding costs and retrieval noise.
+    def two_part_chunk(text):
         if not text:
-            st.sidebar.warning(f"No text extracted from {os.path.basename(pdf_path)}")
+            return []
+        length = len(text)
+        if length < 500:
+            # short doc, keep as single chunk
+            return [text]
+        mid = length // 2
+        # try to find a period near the midpoint (search outward up to 200 chars)
+        left = text.rfind('.', 0, mid)
+        right = text.find('.', mid)
+        split_at = None
+        if left != -1 and mid - left < 200:
+            split_at = left + 1
+        elif right != -1 and right - mid < 200:
+            split_at = right + 1
+        else:
+            # fallback to whitespace nearest midpoint
+            ws_left = text.rfind(' ', 0, mid)
+            ws_right = text.find(' ', mid)
+            if ws_left != -1 and mid - ws_left < 200:
+                split_at = ws_left + 1
+            elif ws_right != -1:
+                split_at = ws_right + 1
+            else:
+                split_at = mid
+        part1 = text[:split_at].strip()
+        part2 = text[split_at:].strip()
+        parts = [p for p in (part1, part2) if p]
+        return parts
+
+    for html_path in html_paths:
+        try:
+            with open(html_path, 'rb') as fh:
+                soup = BeautifulSoup(fh, 'html.parser')
+                raw_text = soup.get_text(separator=' ')
+        except Exception:
+            st.sidebar.warning(f"Failed to read/parse {os.path.basename(html_path)}")
             continue
-        base_id = os.path.basename(pdf_path)
-        parts = chunk_text(text)
+        # Clean text
+        text = clean_text(raw_text)
+        if not text:
+            st.sidebar.warning(f"No text extracted from {os.path.basename(html_path)}")
+            continue
+        base_id = os.path.basename(html_path)
+        parts = two_part_chunk(text)
         for i, part in enumerate(parts):
             doc_id = f"{base_id}::part_{i}"
             ids.append(doc_id)
             documents.append(part)
-            metadatas.append({"source": pdf_path, "filename": base_id, "part": i})
+            metadatas.append({"source": html_path, "filename": base_id, "part": i})
 
     # Batch embeddings via OpenAI client 
     for doc in documents:
@@ -221,7 +269,11 @@ def build_chroma_collection(openai_client, collection_name="Lab4Collection", emb
 
     if final_ids:
         collection.add(ids=final_ids, documents=final_docs, metadatas=final_meta, embeddings=final_embs)
-        st.sidebar.success(f"Added {len(final_ids)} document chunks to '{collection_name}'")
+        try:
+            chroma_client.persist()
+        except Exception:
+            pass
+        st.sidebar.success(f"Added {len(final_ids)} document chunks to '{collection_name}' and persisted DB")
     else:
         st.sidebar.warning("No document chunks were added to the collection (embeddings may have failed).")
 
@@ -231,7 +283,7 @@ def build_chroma_collection(openai_client, collection_name="Lab4Collection", emb
 
 # Build the collection once and store in session state
 if "Lab4_VectorDB" not in st.session_state:
-    with st.spinner("Building ChromaDB collection from PDFs..."):
+    with st.spinner("Building ChromaDB collection from HTML files and persisting to disk..."):
         build_chroma_collection(openai_client)
 
 st.sidebar.header("Model Settings")
@@ -257,8 +309,9 @@ url_2 = st.sidebar.text_input("URL 2:", placeholder="https://example.com")
 if 'openai_client' not in st.session_state:
     st.session_state.openai_client = OpenAI(api_key=openai_api_key)
 
+# Only set Anthropic in session_state if an Anthropic client was successfully created above
 if 'anthropic_client' not in st.session_state:
-    st.session_state.anthropic_client = Anthropic(api_key=claude_api_key)
+    st.session_state.anthropic_client = anthropic_client if anthropic_client is not None else None
 
 # Track URL's for prompt context
 current_urls = (url_1, url_2)
@@ -285,8 +338,12 @@ elif 'last_urls' in st.session_state and st.session_state.last_urls != current_u
     }
     st.session_state.last_urls = current_urls
 
-def maintain_buffer(messages, max_non_system_messages=6):
-    """Keep system message (never discarded) and last 6 non-system messages (3 user-assistant exchanges)"""
+def maintain_buffer(messages, max_non_system_messages=10):
+    """Keep system message (never discarded) and last 10 non-system messages (5 user-assistant exchanges)
+
+    We interpret "5 interactions" as 5 user-assistant exchanges; each exchange has two messages,
+    so we keep up to 10 non-system messages. The system message is always preserved.
+    """
     system_message = None
     non_system_messages = []
     
