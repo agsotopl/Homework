@@ -164,11 +164,10 @@ def build_chroma_collection(openai_client, collection_name="Lab4Collection", emb
     persist_directory = os.path.join(workspace_root, "chroma_db")
     chroma_client = chromadb.Client(Settings(persist_directory=persist_directory))
 
-    # If the persist directory already contains data and the collection exists, just return it
+    
     try:
         collection = chroma_client.get_collection(name=collection_name)
-        # If collection retrieval succeeded and appears non-empty, reuse it
-        # Use a safe check: try to query 1 item to see if anything exists
+        
         try:
             test_q = collection.count()
             if test_q and test_q > 0:
@@ -176,10 +175,8 @@ def build_chroma_collection(openai_client, collection_name="Lab4Collection", emb
                 st.session_state.Lab4_VectorDB = collection
                 return collection
         except Exception:
-            # Fall through to rebuild if count() is not supported or fails
             pass
     except Exception:
-        # Collection not found — we'll create it below
         collection = None
 
     # Create collection if it doesn't exist
@@ -191,11 +188,7 @@ def build_chroma_collection(openai_client, collection_name="Lab4Collection", emb
     metadatas = []
     embeddings = []
 
-    # Chunking helper: We'll create exactly two chunks per document.
-    # Method: split the cleaned document text roughly in half but try to cut at a sentence boundary
-    # (nearest period) to avoid breaking sentences mid-way. This keeps each mini-document coherent
-    # while keeping chunk count small and manageable for retrieval. Two chunks per file provides
-    # coarse-grained locality while limiting embedding costs and retrieval noise.
+    # Chunking helper
     def two_part_chunk(text):
         if not text:
             return []
@@ -204,7 +197,7 @@ def build_chroma_collection(openai_client, collection_name="Lab4Collection", emb
             # short doc, keep as single chunk
             return [text]
         mid = length // 2
-        # try to find a period near the midpoint (search outward up to 200 chars)
+        # try to find period near midpoint
         left = text.rfind('.', 0, mid)
         right = text.find('.', mid)
         split_at = None
@@ -213,7 +206,7 @@ def build_chroma_collection(openai_client, collection_name="Lab4Collection", emb
         elif right != -1 and right - mid < 200:
             split_at = right + 1
         else:
-            # fallback to whitespace nearest midpoint
+            # fallback to whitespace
             ws_left = text.rfind(' ', 0, mid)
             ws_right = text.find(' ', mid)
             if ws_left != -1 and mid - ws_left < 200:
@@ -257,7 +250,7 @@ def build_chroma_collection(openai_client, collection_name="Lab4Collection", emb
             emb = None
         embeddings.append(emb)
 
-    # Filter out any docs where embedding failed
+    # Filter out docs where embedding failed
     final_ids, final_docs, final_meta, final_embs = [], [], [], []
     for i, emb in enumerate(embeddings):
         if emb is None:
@@ -281,7 +274,7 @@ def build_chroma_collection(openai_client, collection_name="Lab4Collection", emb
     return collection
 
 
-# Build the collection once and store in session state
+# Build collection once and store in session state
 if "Lab4_VectorDB" not in st.session_state:
     with st.spinner("Building ChromaDB collection from HTML files and persisting to disk..."):
         build_chroma_collection(openai_client)
@@ -304,12 +297,11 @@ url_1 = st.sidebar.text_input("URL 1:", placeholder="https://example.com")
 url_2 = st.sidebar.text_input("URL 2:", placeholder="https://example.com")
 
 
-# (VectorDB test UI removed.) Retrieval is now integrated into the chat flow below.
+
 
 if 'openai_client' not in st.session_state:
     st.session_state.openai_client = OpenAI(api_key=openai_api_key)
 
-# Only set Anthropic in session_state if an Anthropic client was successfully created above
 if 'anthropic_client' not in st.session_state:
     st.session_state.anthropic_client = anthropic_client if anthropic_client is not None else None
 
@@ -330,7 +322,6 @@ if 'messages' not in st.session_state:
     ]
     st.session_state.last_urls = current_urls
 elif 'last_urls' in st.session_state and st.session_state.last_urls != current_urls:
-    # URLs have changed, update system prompt
     system_prompt = build_system_prompt(url_1, url_2)
     st.session_state.messages[0] = {
         "role": "system",
@@ -427,7 +418,6 @@ if prompt := st.chat_input("What's up?"):
                         retrieved_filenames.append(fname)
                         retrieved_blocks.append(f"Filename: {fname}\nSnippet: {snippet[:1000]}")
 
-            # Build augmented messages with retrieved context (if present)
             augmented_messages = list(st.session_state.messages)
             if retrieved_blocks:
                 retrieved_text = "\n\n".join(retrieved_blocks)
@@ -438,7 +428,6 @@ if prompt := st.chat_input("What's up?"):
                 )
                 augmented_messages.append({"role": "user", "content": aug_msg})
 
-            # Call the model (streaming)
             stream = st.session_state.openai_client.chat.completions.create(
                 model=chat_model,
                 messages=augmented_messages,
@@ -446,7 +435,6 @@ if prompt := st.chat_input("What's up?"):
             )
             response = st.write_stream(stream)
         else:
-            # Extract system message and non-system messages for Claude
             system_message = None
             conversation_messages = []
 
