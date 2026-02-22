@@ -41,7 +41,7 @@ from chromadb.config import Settings
 from PyPDF2 import PdfReader
 
 
-st.title("Lab 4: ChromaDB")
+st.title("HW 5: ChromaDB Optimizations")
 
 # Chatbot Description
 st.write("""
